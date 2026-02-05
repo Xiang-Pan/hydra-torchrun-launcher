@@ -56,6 +56,8 @@ if Version(version("torch")) >= Version("2.3"):
     class TorchDistributedLauncherConf(TorchDistributedLauncherConf):
         logs_specs: Optional[str] = None
         local_ranks_filter: str = ""
+        numa_binding: Optional[str] = None
+        event_log_handler: str = "null"
 
 ConfigStore.instance().store(
     group="hydra/launcher", name="torchrun", node=TorchDistributedLauncherConf

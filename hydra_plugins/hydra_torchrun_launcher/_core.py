@@ -6,6 +6,7 @@
 import logging
 import pickle
 import cloudpickle
+import importlib
 
 import functools
 from pathlib import Path
@@ -31,6 +32,34 @@ from torch.distributed.run import config_from_args
 from .distributed_launcher import TorchDistributedLauncher
 
 logger = logging.getLogger(__name__)
+
+
+def _get_function_reference(func):
+    """Extract module and qualified name from a function for lazy import in workers.
+
+    Returns a tuple of (module_name, qualname, script_dir) where script_dir may be None.
+    """
+    import sys
+    import os
+
+    module_name = getattr(func, '__module__', None)
+    qualname = getattr(func, '__qualname__', None)
+    script_dir = None
+
+    if not module_name or not qualname:
+        return None
+
+    # Handle __main__ module - need to get the actual module name from the file
+    if module_name == '__main__':
+        # Get the main script path
+        main_module = sys.modules.get('__main__')
+        if main_module and hasattr(main_module, '__file__') and main_module.__file__:
+            script_path = os.path.abspath(main_module.__file__)
+            script_dir = os.path.dirname(script_path)
+            script_name = os.path.splitext(os.path.basename(script_path))[0]
+            module_name = script_name
+
+    return (module_name, qualname, script_dir)
 
 
 def setup(
@@ -115,16 +144,54 @@ def launch(
 
 
 def elastic_launch_task_function(task_function, launch_config, task_config):
-    return launch_agent(
-        launch_config,
-        wrapped_task_function,
-        [cloudpickle.dumps(task_function), cloudpickle.dumps(task_config), cloudpickle.dumps(Singleton.get_state())],
-    )
+    # Try to get function reference for lazy import (avoids pickling torch._Ops)
+    func_ref = _get_function_reference(task_function)
+
+    if func_ref is not None:
+        # Pass function reference instead of pickled function
+        return launch_agent(
+            launch_config,
+            wrapped_task_function_by_ref,
+            [func_ref, cloudpickle.dumps(task_config), cloudpickle.dumps(Singleton.get_state())],
+        )
+    else:
+        # Fallback to original cloudpickle approach
+        return launch_agent(
+            launch_config,
+            wrapped_task_function,
+            [cloudpickle.dumps(task_function), cloudpickle.dumps(task_config), cloudpickle.dumps(Singleton.get_state())],
+        )
 
 
 def wrapped_task_function(dumped_task_function, dumped_task_config, dumped_singleton_state):
-    # Restoring
+    # Restoring (legacy cloudpickle approach)
     task_function = pickle.loads(dumped_task_function)
+    task_config = pickle.loads(dumped_task_config)
+    singleton_state = pickle.loads(dumped_singleton_state)
+
+    Singleton.set_state(singleton_state)
+    config = HydraConfig.instance().cfg
+    configure_log(config.hydra.job_logging, config.hydra.verbose)
+    return task_function(task_config)
+
+
+def wrapped_task_function_by_ref(func_ref, dumped_task_config, dumped_singleton_state):
+    # Import function by reference (avoids pickling issues with torch._Ops)
+    import sys
+
+    module_name, qualname, script_dir = func_ref
+
+    # Add script directory to path if provided (needed for __main__ module imports)
+    if script_dir and script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+
+    module = importlib.import_module(module_name)
+
+    # Navigate to the function using qualname (handles nested classes/functions)
+    task_function = module
+    for attr in qualname.split('.'):
+        task_function = getattr(task_function, attr)
+
     task_config = pickle.loads(dumped_task_config)
     singleton_state = pickle.loads(dumped_singleton_state)
 
