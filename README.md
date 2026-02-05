@@ -40,13 +40,13 @@ Please refer to its documentation for a more detailed introduction.
 ### Installation
 
 ```shell
-pip3 install git+https://github.com/acherstyx/hydra-torchrun-launcher.git
+pip install git+https://github.com/Xiang-Pan/hydra-torchrun-launcher.git
 ```
 
 ### Usage
 
 ```shell
-python3 run_net.py --multirun hydra/launcher=torchrun hydra.launcher.nproc_per_node=8
+python run_net.py --multirun hydra/launcher=torchrun hydra.launcher.nproc_per_node=8
 ```
 
 The behavior of this example should be the same as launching with `torchrun`:
@@ -56,6 +56,8 @@ torchrun --nproc_per_node=8 run_net.py
 ```
 
 ### Acknowledgement
+
+This is modified from https://github.com/Yaojie-Shen/hydra-torchrun-launcher.
 
 This plugin is modified from the hydra-torchrun-launcher plugin at [hydra/contrib](https://github.com/facebookresearch/hydra/tree/main/contrib/hydra_torchrun_launcher).
 Currently, the main difference includes:
